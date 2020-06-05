@@ -303,6 +303,7 @@ if (cacti_sizeof($query)) {
 		$sql      = '';
 		$alertm   = '';
 		$htmlm    = '';
+		$htmlt    = '';
 		$smsalert = '';
 		$th_sql   = '';
 
@@ -333,6 +334,9 @@ if (cacti_sizeof($query)) {
 			$sql = 'SELECT * FROM `' . $syslogdb_default . '`.`syslog_incoming`
 				WHERE (' . $alert['message'] . ')
 				AND status=' . $uniqueID;
+		} else if ($alert['type'] == 'regex') {
+			$sql = 'SELECT * FROM `' . $syslogdb_default . '`.`syslog_incoming`
+				WHERE status=' . $uniqueID;
 		}
 
 		if ($sql != '') {
@@ -349,12 +353,29 @@ if (cacti_sizeof($query)) {
 					$date = date('Y-m-d H:i:s', time() - ($alert['repeat_alert'] * read_config_option('poller_interval')));
 				}
 
+				/* Check against the regular expressions */
+				if ($alert['type'] == 'regex') {
+					$regex = preg_match('/^\/.+\/\w+?/',$alert['message']) ? $alert['message'] : '/'.$alert['message'].'/';
+					cacti_log("Alert Rule '" . $alert['name'] . "' using regex: $regex",true, 'SYSTEM');
+					foreach ($at as $i => $a) {
+						if (preg_match($regex,$a['message'],$matches)) {
+							$alert['keys'] = [];
+							foreach ($matches as $key => $match) {
+								if (!is_numeric($key)) {
+									$alert['keys']["regex.$key"] = $match;
+								}
+							}
+						}  else {
+							unset($at[$i]);
+						}
+					}
+				}
 				if (cacti_sizeof($at)) {
 					$htmlm .= "<html><head><style type='text/css'>";
 					$htmlm .= file_get_contents($config['base_path'] . '/plugins/syslog/syslog.css');
 					$htmlm .= '</style></head>';
 
-					if ($alert['method'] == '1') {
+					if ($alert['method'] == '1' && !$alert['html_template']) {
 						$alertm .= "-----------------------------------------------\n";
 						$alertm .= __('WARNING: A Syslog Plugin Instance Count Alert has Been Triggered', 'syslog') . "\n";
 						$alertm .= __('Name:', 'syslog')           . ' ' . html_escape($alert['name']) . "\n";
@@ -365,43 +386,51 @@ if (cacti_sizeof($query)) {
 
 						$htmlm  .= '<body><h1>' . __('Cacti Syslog Plugin Threshold Alert \'%s\'', $alert['name'], 'syslog') . '</h1>';
 						$htmlm  .= '<table cellspacing="0" cellpadding="3" border="1">';
-						$htmlm  .= '<tr><th>' . __('Alert Name', 'syslog') . '</th><th>' . __('Severity', 'syslog') . '</th><th>' . __('Threshold', 'syslog') . '</th><th>' . __('Count', 'syslog') . '</th><th>' . __('Match String', 'syslog') . '</th></tr>';
+						$htmlm  .= '<tr style="background-color: rgba(138, 179, 105, 1);">><th>' . __('Alert Name', 'syslog') . '</th><th>' . __('Severity', 'syslog') . '</th><th>' . __('Threshold', 'syslog') . '</th><th>' . __('Count', 'syslog') . '</th><th>' . __('Match String', 'syslog') . '</th></tr>';
 						$htmlm  .= '<tr><td>' . html_escape($alert['name']) . '</td>';
 						$htmlm  .= '<td>'     . $severities[$alert['severity']]  . '</td>';
 						$htmlm  .= '<td>'     . $alert['num']     . '</td>';
 						$htmlm  .= '<td>'     . sizeof($at)       . '</td>';
 						$htmlm  .= '<td>'     . html_escape($alert['message']) . '</td></tr></table><br>';
-					}else{
+					} else{
 						$htmlm .= '<body><h1>' . __('Cacti Syslog Plugin Alert \'%s\'', $alert['name'], 'syslog') . '</h1>';
 					}
 
-					$htmlm .= '<table>';
-					$htmlm .= '<tr><th>' . __('Hostname', 'syslog') . '</th><th>' . __('Date', 'syslog') . '</th><th>' . __('Severity', 'syslog') . '</th><th>' . __('Level', 'syslog') . '</th><th>' . __('Message', 'syslog') . '</th></tr>';
-
+					if (!$alert['html_template']) {
+						$htmlm .= '<table>';
+						$htmlm .= '<tr><th>' . __('Hostname', 'syslog') . '</th><th>' . __('Date', 'syslog') . '</th><th>' . __('Severity', 'syslog') . '</th><th>' . __('Level', 'syslog') . '</th><th>' . __('Message', 'syslog') . '</th></tr>';
+					}
 					$max_alerts  = read_config_option('syslog_maxrecords');
 					$alert_count = 0;
 					$htmlh       = $htmlm;
 					$alerth      = $alertm;
 					$hostlist    = array();
+					$email_subject = $alert['email_subject'] ? $alert['email_subject'] : "";
 					foreach($at as $a) {
 						$a['message'] = str_replace('  ', "\n", $a['message']);
 						$a['message'] = trim($a['message']);
 
 						if (($alert['method'] == 1 && $alert_count < $max_alerts) || $alert['method'] == 0) {
-							if ($alert['method'] == 0) $alertm  = $alerth;
-							$alertm .= "-----------------------------------------------\n";
-							$alertm .= __('Hostname:', 'syslog') . ' ' . html_escape($a['host']) . "\n";
-							$alertm .= __('Date:', 'syslog')     . ' ' . $a['logtime'] . "\n";
-							$alertm .= __('Severity:', 'syslog') . ' ' . $severities[$alert['severity']] . "\n\n";
-							$alertm .= __('Level:', 'syslog')    . ' ' . $syslog_levels[$a['priority_id']] . "\n\n";
-							$alertm .= __('Message:', 'syslog')  . ' ' . "\n" . html_escape($a['message']) . "\n";
+							if ($alert['html_template']) {
+								$alertm = alert_replace_template($alert['html_template'],$alert,$a);
+								$htmlm.="<div style='width: 100%'>".str_replace("\n","<br>",$alertm)."</div><br>";
+								
+							} else {
+								if ($alert['method'] == 0) $alertm  = $alerth;
+								$alertm .= "-----------------------------------------------\n";
+								$alertm .= __('Hostname:', 'syslog') . ' ' . html_escape($a['host']) . "\n";
+								$alertm .= __('Date:', 'syslog')     . ' ' . $a['logtime'] . "\n";
+								$alertm .= __('Severity:', 'syslog') . ' ' . $severities[$alert['severity']] . "\n\n";
+								$alertm .= __('Level:', 'syslog')    . ' ' . $syslog_levels[$a['priority_id']] . "\n\n";
+								$alertm .= __('Message:', 'syslog')  . ' ' . "\n" . html_escape($a['message']) . "\n";
 
-							if ($alert['method'] == 0) $htmlm   = $htmlh;
-							$htmlm  .= '<tr><td>' . $a['host']                        . '</td>';
-							$htmlm  .= '<td>'     . $a['logtime']                     . '</td>';
-							$htmlm  .= '<td>'     . $severities[$alert['severity']]   . '</td>';
-							$htmlm  .= '<td>'     . $syslog_levels[$a['priority_id']] . '</td>';
-							$htmlm  .= '<td>'     . html_escape($a['message']) . '</td></tr>';
+								if ($alert['method'] == 0) $htmlm   = $htmlh;
+								$htmlm  .= '<tr><td>' . $a['host']                        . '</td>';
+								$htmlm  .= '<td>'     . $a['logtime']                     . '</td>';
+								$htmlm  .= '<td>'     . $severities[$alert['severity']]   . '</td>';
+								$htmlm  .= '<td>'     . $syslog_levels[$a['priority_id']] . '</td>';
+								$htmlm  .= '<td>'     . html_escape($a['message']) . '</td></tr>';
+							}
 						}
 
 						$syslog_alarms++;
@@ -422,8 +451,7 @@ if (cacti_sizeof($query)) {
 								$htmlm  .= '</table></body></html>';
 								$sequence = syslog_log_alert($alert['id'], $alert['name'], $alert['severity'], $a, 1, $htmlm);
 								$smsalert = __('Sev:', 'syslog') . $severities[$alert['severity']] . __(', Host:', 'syslog') . $a['host'] . __(', URL:', 'syslog') . read_config_option('base_url', true) . '/plugins/syslog/syslog.php?tab=current&id=' . $sequence;
-
-								syslog_sendemail(trim($alert['email']), $from, __('Event Alert - %s', $alert['name'], 'syslog'), ($html ? $htmlm:$alertm), $smsalert);
+								syslog_sendemail(trim($alert['email']), $from, $email_subject ? $email_subject : __('Event Alert - %s', $alert['name'], 'syslog'), ($html ? $htmlm:$alertm), $smsalert);
 
 								if ($alert['open_ticket'] == 'on' && strlen(read_config_option('syslog_ticket_command'))) {
 									if (is_executable(read_config_option('syslog_ticket_command'))) {
@@ -447,8 +475,8 @@ if (cacti_sizeof($query)) {
 						}
 					}
 
-					$htmlm  .= '</table></body></html>';
-					$alertm .= "-----------------------------------------------\n\n";
+					$htmlm  .= $alert['html_template'] ? '</body></html>' : '</table></body></html>';
+					$alertm .= $alert['html_template'] ? '<br>' : "-----------------------------------------------\n\n";
 
 					if ($alert['method'] == 1) {
 						$sequence = syslog_log_alert($alert['id'], $alert['name'], $alert['severity'], $at[0], sizeof($at), $htmlm, $hostlist);
@@ -758,4 +786,26 @@ function alert_replace_variables($alert, $a) {
 	$command = str_replace('<SEVERITY>', cacti_escapeshellarg($severities[$alert['severity']]), $command);
 
 	return $command;
+}
+
+function alert_replace_template($text,$alert,$a) {
+
+	foreach ($alert['keys'] as $key => $val) {
+		$text = str_replace('{{'.$key.'}}',$val,$text);
+	}
+	$alert_host = $a['host'];
+	/* Check if this IPv4 / IPv6 address is in the hosts table */
+	if (strstr($text,'{{host.description}}') && (preg_match('/^(((([1]?\d)?\d|2[0-4]\d|25[0-5])\.){3}(([1]?\d)?\d|2[0-4]\d|25[0-5]))|([\da-fA-F]{1,4}(\:[\da-fA-F]{1,4}){7})|(([\da-fA-F]{1,4}:){0,5}::([\da-fA-F]{1,4}:){0,5}[\da-fA-F]{1,4})$/',$alert_host))) {
+		$host_description = syslog_db_fetch_cell("SELECT description from host where hostname=".db_qstr($alert_host));
+		cacti_log("SYSLOG: Matched IPv4 regex for alert:".$alert['name'].", description:$host_description",true,"SYSTEM");
+		cacti_log("SYSLOG: SQL:"."SELECT description from host where hostname=".db_qstr($alert_host));
+		$alert_host = $host_description ? "$host_description ($alert_host)": $alert_host;
+		$text = str_replace("{{host.description}}",$alert_host,$text);
+	}
+	if (strstr($text,'{{syslog.host}}')) 	{ $text=str_replace("{{syslog.host}}",html_escape($a['host']),$text); }
+	if (strstr($text,'{{syslog.time}}')) 	{ $text=str_replace("{{syslog.time}}",$a['logtime'],$text); }
+	if (strstr($text,'{{syslog.severity}}')){ $text=str_replace("{{syslog.severity}}", $severities[$alert['severity']],$text); }
+	if (strstr($text,'{{syslog.level}}')) 	{ $text=str_replace("{{syslog.level}}", $syslog_levels[$a['priority_id']],$text); }
+	if (strstr($text,'{{syslog.message}}')) { $text=str_replace("{{syslog.message}}", html_escape($a['message']),$text); }
+	return($text);
 }

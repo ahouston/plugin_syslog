@@ -86,7 +86,8 @@ function form_save() {
 			get_nfilter_request_var('email'), get_nfilter_request_var('notes'),
 			get_nfilter_request_var('enabled'), get_nfilter_request_var('severity'),
 			get_nfilter_request_var('command'), get_nfilter_request_var('repeat_alert'),
-			get_nfilter_request_var('open_ticket'));
+			get_nfilter_request_var('open_ticket'), get_nfilter_request_var('example_text'), 
+			get_nfilter_request_var('email_subject'), get_nfilter_request_var('html_template'));
 
 		if ((is_error_message()) || (get_filter_request_var('id') != get_filter_request_var('_id'))) {
 			header('Location: syslog_alerts.php?header=false&action=edit&id=' . (empty($alertid) ? get_filter_request_var('id') : $alertid));
@@ -255,7 +256,7 @@ function alert_export() {
 }
 
 function api_syslog_alert_save($id, $name, $method, $num, $type, $message, $email, $notes,
-	$enabled, $severity, $command, $repeat_alert, $open_ticket) {
+	$enabled, $severity, $command, $repeat_alert, $open_ticket, $example_text, $email_subject, $html_template) {
 
 	include(dirname(__FILE__) . '/config.php');
 
@@ -284,6 +285,9 @@ function api_syslog_alert_save($id, $name, $method, $num, $type, $message, $emai
 	$save['method']       = $method;
 	$save['user']         = $username;
 	$save['date']         = time();
+	$save['example_text'] = form_input_validate($example_text, 'example_text',  '', true, 3);
+	$save['email_subject'] = form_input_validate($email_subject, 'example_text',  '', true, 3);
+	$save['html_template'] = form_input_validate($html_template,'html_template', '', true, 3);
 
 	if (!is_error_message()) {
 		$id = 0;
@@ -499,6 +503,17 @@ function syslog_action_edit() {
 			'value' => '|arg1:message|',
 			'default' => ''
 		),
+		'example_text' => array(
+			'friendly_name' => __('Match Example Text', 'syslog'),
+			'description' => __('Example text to match your statement against', 'syslog'),
+			'method' => 'textarea',
+			'class' => 'textAreaNotes',
+			'value' => '|arg1:example_text|',
+			'textarea_rows' => '5',
+			'textarea_cols' => '70',
+			'max_length' => '128',
+			'default' => ''
+		),
 		'enabled' => array(
 			'method' => 'drop_array',
 			'friendly_name' => __('Alert Enabled', 'syslog'),
@@ -547,6 +562,14 @@ function syslog_action_edit() {
 			'value' => '|arg1:email|',
 			'max_length' => '255'
 		),
+		'email_subject' => array(
+			'method' => 'textbox',
+			'friendly_name' => __('Email Subject', 'syslog'),
+			'description' => __('Email subject template to be used. You can interpolate the same variables as HTML Template.', 'syslog'),
+			'value' => '|arg1:email_subject|',
+			'max_length' => '128',
+			'size' => '51',
+		),
 		'command' => array(
 			'friendly_name' => __('Alert Command', 'syslog'),
 			'textarea_rows' => '5',
@@ -555,6 +578,16 @@ function syslog_action_edit() {
 			'method' => 'textarea',
 			'class' => 'textAreaNotes',
 			'value' => '|arg1:command|',
+			'default' => '',
+		),
+		'html_template' => array(
+			'friendly_name' => __('HTML Template', 'syslog'),
+			'textarea_rows' => '5',
+			'textarea_cols' => '70',
+			'description' => __('If populated this will be used as the HTML Template when sending emails.<br>You can interpolate the following variables into your HTML:<br><b>{{host.description}}</b> - matching host description or sending IP if not found.', 'syslog'),
+			'method' => 'textarea',
+			'class' => 'textAreaNotes',
+			'value' => '|arg1:html_template|',
 			'default' => '',
 		),
 		'id' => array(
@@ -590,12 +623,52 @@ function syslog_action_edit() {
 	<script type='text/javascript'>
 
 	function changeTypes() {
+		/* Remove the height: 100px CSS property */
 		if ($('#type').val() == 'sql') {
-			$('#message').prep('rows', 6);
+			$('#message').attr('rows', 6);
+			$("#message").css('height','125');
+			$("#row_example_text").hide();
+		} else if ($('#type').val() == 'regex') {
+			$("#row_example_text").show();
 		} else {
-			$('#message').prep('rows', 2);
+			$('#message').attr('rows', 2);
+			$("#message").css('height','50');
+			$("#row_example_text").hide();
 		}
 	}
+
+	function checkRegex() {
+
+		let regex = new RegExp($("#message").val());
+		let text = $("#example_text").val()
+		console.log("Regex:",regex,"Text:",text);
+		if (text.match(regex)) {
+			let groups = text.match(regex).groups;
+			if (groups) {
+				console.log("GROUPS:",groups);
+				for (group in groups) {
+					text = text.replace(groups[group],"<span style='background-color: #c7ceea;'><b>{{regex."+group+"}}:</b> "+groups[group]+"</span>");
+				}
+			}
+
+			$("#regex_highlight").html("<b>Regular Expression matches!</b><br>"+text);
+		}
+		else {
+			$("#regex_highlight").html("Regular Expression does not match.");
+		}
+	}
+
+	$(function() {
+		
+		$("#row_example_text .formColumnLeft").append("<div id='regex_highlight' style='width: 100%; float: left;line-height: 1.5em;margin-left: 10px'></div>");
+		//$("#message").blur(function() { checkRegex($("#message").val(),$("#example_text").val());  });
+		$("#example_text, #message").blur(function() { checkRegex(); });
+		changeTypes();
+		checkRegex();
+
+	});
+	
+
 	</script>
 
 	<?php
@@ -670,6 +743,7 @@ function syslog_filter() {
 		}
 
 		$(function() {
+
 			$('#refresh').click(function() {
 				applyFilter();
 			});
@@ -686,6 +760,7 @@ function syslog_filter() {
 				event.preventDefault();
 				applyFilter();
 			});
+			
 		});
 
 		</script>

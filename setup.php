@@ -276,6 +276,33 @@ function syslog_check_upgrade() {
 				'default'  => '',
 				'after'    => 'id')
 			);
+
+		}
+
+		if (!syslog_db_column_exists('syslog_alerts','example_text')) {
+			syslog_db_add_column('syslog_alert', array(
+				'name'     => 'example_text',
+				'type'     => 'varchar(256)',
+				'NULL'     => true,
+				'default'  => '',
+				'after'    => 'notes')
+			);
+			syslog_db_add_column('syslog_alert', array(
+				'name'     => 'email_subject',
+				'type'     => 'varchar(128)',
+				'NULL'     => true,
+				'default'  => '',
+				'after'    => 'example_text')
+			);
+			syslog_db_add_column('syslog_alert', array(
+				'name'     => 'html_template',
+				'type'     => 'text',
+				'NULL'     => true,
+				'default'  => '',
+				'after'    => 'email_subject')
+			);
+			syslog_db_execute("ALTER TABLE `syslog_alert` CHANGE `message` `message` VARCHAR(256) NOT NULL DEFAULT '';");
+
 		}
 
 		if (syslog_db_column_exists('syslog_incoming', 'date')) {
@@ -445,6 +472,9 @@ function syslog_setup_table_new($options) {
 		`email` varchar(255) default NULL,
 		`command` varchar(255) default NULL,
 		`notes` varchar(255) default NULL,
+		`example_text` varchar(128) default NULL,
+		`email_subject` varchar(128) default NULL,
+		`html_template` text default NULL,
 		PRIMARY KEY (id)) ENGINE=$engine;");
 
 	if ($truncate) syslog_db_execute("DROP TABLE IF EXISTS `" . $syslogdb_default . "`.`syslog_incoming`");
@@ -1050,7 +1080,8 @@ function syslog_config_arrays () {
 		'messagee' => __('Ends with', 'syslog'),
 		'host'     => __('Hostname is', 'syslog'),
 		'facility' => __('Facility is', 'syslog'),
-		'sql'      => __('SQL Expression', 'syslog')
+		'sql'      => __('SQL Expression', 'syslog'),
+		'regex'	   => __('Regular Expression','syslog')
 	);
 
 	$syslog_freqs = array(
